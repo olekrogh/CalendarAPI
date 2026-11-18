@@ -3,10 +3,13 @@ using CalendarApi.Services;
 
 namespace CalendarApi.Tests;
 
-/// <summary>Unit tests for the in-memory store and request validation.</summary>
-public class StoreTests
+/// <summary>
+/// Behaviour every <see cref="ICalendarStore"/> must have. Run against each implementation by the subclasses below,
+/// so the in-memory and SQLite stores are proven interchangeable.
+/// </summary>
+public abstract class StoreContractTests(ICalendarStore store)
 {
-    private readonly InMemoryCalendarStore _store = new();
+    private readonly ICalendarStore _store = store;
 
     private Calendar NewCalendar(string owner = "alice", string name = "Work") =>
         _store.AddCalendar(new Calendar(Guid.NewGuid(), owner, name, null));
@@ -83,6 +86,95 @@ public class StoreTests
         Assert.Equal("Changed", _store.GetEvent(calendar.Id, ev.Id)!.Title);
         Assert.True(_store.DeleteEvent(calendar.Id, ev.Id));
         Assert.Empty(_store.ListEvents(calendar.Id));
+    }
+}
+
+public class InMemoryStoreTests() : StoreContractTests(new InMemoryCalendarStore());
+
+/// <summary>The contract tests against SQLite, plus behaviour only a real database has.</summary>
+public class SqliteStoreTests : StoreContractTests, IDisposable
+{
+    private readonly SqliteTestDb _db;
+
+    public SqliteStoreTests() : this(new SqliteTestDb()) { }
+
+    private SqliteStoreTests(SqliteTestDb db) : base(db.NewStore()) => _db = db;
+
+    public void Dispose() => _db.Dispose();
+
+    [Fact]
+    public void Data_SurvivesANewStoreInstance()
+    {
+        var calendar = _db.NewStore().AddCalendar(new Calendar(Guid.NewGuid(), "alice", "Work", "desc"));
+
+        var reloaded = _db.NewStore().GetCalendar(calendar.Id);
+
+        Assert.Equal(calendar, reloaded);
+    }
+
+    [Fact]
+    public void Event_RoundTripsRecurrenceAndUtcOffset()
+    {
+        var store = _db.NewStore();
+        var calendar = store.AddCalendar(new Calendar(Guid.NewGuid(), "alice", "Work", null));
+        var start = new DateTimeOffset(2026, 1, 5, 9, 0, 0, TimeSpan.FromHours(2));
+        var rule = new RecurrenceRule(RecurrenceFrequency.Weekly, 2, [DayOfWeek.Monday, DayOfWeek.Friday], Until: start.AddMonths(3));
+        var ev = store.AddEvent(new CalendarEvent(Guid.NewGuid(), calendar.Id, "Gym", null, start, start.AddHours(1), rule));
+
+        var loaded = _db.NewStore().GetEvent(calendar.Id, ev.Id)!;
+
+        Assert.Equal(start, loaded.Start);
+        Assert.Equal(TimeSpan.FromHours(2), loaded.Start.Offset); // offset is preserved, not normalised to UTC
+        Assert.Equal(RecurrenceFrequency.Weekly, loaded.Recurrence!.Frequency);
+        Assert.Equal(2, loaded.Recurrence.Interval);
+        Assert.Equal([DayOfWeek.Monday, DayOfWeek.Friday], loaded.Recurrence.DaysOfWeek);
+        Assert.Equal(rule.Until, loaded.Recurrence.Until);
+    }
+
+    [Fact]
+    public void Event_WithoutRecurrence_LoadsAsNull()
+    {
+        var store = _db.NewStore();
+        var calendar = store.AddCalendar(new Calendar(Guid.NewGuid(), "alice", "Work", null));
+        var ev = store.AddEvent(new CalendarEvent(Guid.NewGuid(), calendar.Id, "One-off", null,
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddHours(1), null));
+
+        Assert.Null(_db.NewStore().GetEvent(calendar.Id, ev.Id)!.Recurrence);
+    }
+
+    [Fact]
+    public void AddEvent_ForUnknownCalendar_IsRejectedByForeignKey() =>
+        Assert.ThrowsAny<Exception>(() => _db.NewStore().AddEvent(new CalendarEvent(
+            Guid.NewGuid(), Guid.NewGuid(), "Orphan", null, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddHours(1), null)));
+
+    [Fact]
+    public void DeleteResource_WithBookedEvents_IsRejectedByForeignKey_AndKeepsTheEvent()
+    {
+        var store = _db.NewStore();
+        var calendar = store.AddCalendar(new Calendar(Guid.NewGuid(), "alice", "Work", null));
+        var room = store.AddResource(new Resource(Guid.NewGuid(), "Room", null, 4));
+        var ev = store.AddEvent(new CalendarEvent(Guid.NewGuid(), calendar.Id, "Meeting", null,
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddHours(1), null, room.Id));
+
+        Assert.ThrowsAny<Exception>(() => store.DeleteResource(room.Id));
+
+        Assert.NotNull(store.GetEvent(calendar.Id, ev.Id));
+        Assert.NotNull(store.GetResource(room.Id));
+    }
+
+    [Fact]
+    public void ResourceCrud_Works()
+    {
+        var store = _db.NewStore();
+        var room = store.AddResource(new Resource(Guid.NewGuid(), "B room", null, 4));
+        store.AddResource(new Resource(Guid.NewGuid(), "a room", null, null));
+
+        Assert.Equal(["a room", "B room"], store.ListResources().Select(r => r.Name)); // case-insensitive order
+        Assert.True(store.UpdateResource(room with { Capacity = 9 }));
+        Assert.Equal(9, store.GetResource(room.Id)!.Capacity);
+        Assert.False(store.UpdateResource(new Resource(Guid.NewGuid(), "ghost", null, null)));
+        Assert.True(store.DeleteResource(room.Id));
+        Assert.False(store.DeleteResource(room.Id));
     }
 }
 

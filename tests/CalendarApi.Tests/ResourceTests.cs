@@ -140,11 +140,11 @@ public class BookingServiceTests
 }
 
 /// <summary>The OpenAPI document and Swagger UI are served in Development (the factory's default environment).</summary>
-public class OpenApiTests : IClassFixture<WebApplicationFactory<Program>>
+public class OpenApiTests : IClassFixture<TestApp>
 {
     private readonly HttpClient _client;
 
-    public OpenApiTests(WebApplicationFactory<Program> factory) => _client = factory.CreateClient();
+    public OpenApiTests(TestApp factory) => _client = factory.CreateClient();
 
     [Fact]
     public async Task OpenApiDocument_DescribesAllEndpointGroups()
@@ -177,7 +177,7 @@ public class ResourceApiTests : IDisposable
 
     private static readonly DateTimeOffset Start = new(2026, 1, 5, 9, 0, 0, TimeSpan.Zero);
 
-    private readonly WebApplicationFactory<Program> _factory = new();
+    private readonly TestApp _factory = new();
     private readonly HttpClient _client;
 
     public ResourceApiTests() => _client = _factory.CreateClient();

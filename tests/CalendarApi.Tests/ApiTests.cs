@@ -20,7 +20,7 @@ public class ApiTests : IDisposable
 
     private static readonly DateTimeOffset Start = new(2026, 1, 5, 9, 0, 0, TimeSpan.Zero); // a Monday
 
-    private readonly WebApplicationFactory<Program> _factory = new();
+    private readonly TestApp _factory = new();
     private readonly HttpClient _client;
 
     public ApiTests() => _client = _factory.CreateClient();

@@ -26,7 +26,19 @@ dotnet test                              # unit + integration tests
 - Ready-made requests: [`src/CalendarApi/CalendarApi.http`](src/CalendarApi/CalendarApi.http)
   (VS, VS Code REST Client, Rider). Run them top to bottom; later requests reuse earlier IDs.
 
-Data is held **in memory** and is lost when the app restarts.
+## Database
+
+Data is stored in **SQLite** through EF Core. The file is `calendar.db` in the working directory (git-ignored) and is
+created automatically on first start. Change it with the `ConnectionStrings:CalendarDb` setting, e.g. in
+`appsettings.json` or the `ConnectionStrings__CalendarDb` environment variable:
+
+```json
+{ "ConnectionStrings": { "CalendarDb": "Data Source=C:/data/calendar.db" } }
+```
+
+Foreign keys enforce that events belong to a calendar (deleting a calendar cascades to its events) and that a resource
+with bookings cannot be deleted. The schema is created with `EnsureCreated`; there are no migrations yet, so a schema
+change currently means recreating the database.
 
 ## Endpoints
 
@@ -128,7 +140,8 @@ With neither `count` nor `until` the series is open-ended.
 - Occurrences are computed on request, never stored. Queries return at most 5,000 occurrences.
 - Recurrence keeps the start's UTC offset, so there is no daylight-saving adjustment.
 - Open-ended series are checked for resource clashes over 730 days from the new event's start.
-- Booking checks use an in-process lock, so they are only safe within a single running instance.
+- Booking checks use an in-process lock, so they are only safe within a single running instance (and SQLite is a
+  single-file database, so run one instance against one file).
 - There is no authentication, and no way to edit or skip a single occurrence of a series.
 
 ## Project layout
@@ -137,8 +150,11 @@ With neither `count` nor `until` the series is open-ended.
 src/CalendarApi/
   Endpoints/   Route definitions (calendars, events, resources)
   Models/      Records and request bodies
-  Services/    RecurrenceExpander, BookingService, ICalendarStore (in-memory), RequestValidator
+  Data/        CalendarDbContext (EF Core model) and EfCalendarStore (SQLite)
+  Services/    RecurrenceExpander, BookingService, ICalendarStore, InMemoryCalendarStore, RequestValidator
 tests/CalendarApi.Tests/   Unit tests (recurrence, store, validation, booking) and HTTP integration tests
 ```
 
-`ICalendarStore` is the persistence seam: replace `InMemoryCalendarStore` to use a database.
+`ICalendarStore` is the persistence seam. `EfCalendarStore` is used by the app; `InMemoryCalendarStore` is kept as a
+lightweight implementation, and the same contract tests run against both. Each integration test gets its own temporary
+SQLite file, so tests never share data.
