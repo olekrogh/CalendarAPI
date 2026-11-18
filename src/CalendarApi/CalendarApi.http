@@ -1,0 +1,171 @@
+### Calendar API – try the endpoints from VS / VS Code / Rider.
+### Run the API first (dotnet run --project src/CalendarApi), then send requests top to bottom.
+### Requests capture IDs from earlier responses, so run them in order.
+
+@host = http://localhost:5063
+
+### ---------------------------------------------------------------- Calendars
+
+### Create a calendar for alice
+# @name createWork
+POST {{host}}/api/calendars
+Content-Type: application/json
+
+{ "ownerId": "alice", "name": "Work", "description": "Work events" }
+
+###
+@workId = {{createWork.response.body.$.id}}
+
+### A user can own many calendars
+# @name createPersonal
+POST {{host}}/api/calendars
+Content-Type: application/json
+
+{ "ownerId": "alice", "name": "Personal" }
+
+### List all calendars
+GET {{host}}/api/calendars
+
+### List only alice's calendars
+GET {{host}}/api/calendars?ownerId=alice
+
+### Get one calendar
+GET {{host}}/api/calendars/{{workId}}
+
+### Rename a calendar (owner cannot change)
+PUT {{host}}/api/calendars/{{workId}}
+Content-Type: application/json
+
+{ "name": "Work (renamed)", "description": "Updated" }
+
+### ---------------------------------------------------------------- Resources (meeting rooms)
+
+### Create a room
+# @name createRoom
+POST {{host}}/api/resources
+Content-Type: application/json
+
+{ "name": "Boardroom", "description": "3rd floor", "capacity": 10 }
+
+###
+@roomId = {{createRoom.response.body.$.id}}
+
+### List rooms
+GET {{host}}/api/resources
+
+### Get one room
+GET {{host}}/api/resources/{{roomId}}
+
+### Update a room
+PUT {{host}}/api/resources/{{roomId}}
+Content-Type: application/json
+
+{ "name": "Boardroom", "description": "3rd floor, projector", "capacity": 12 }
+
+### ---------------------------------------------------------------- Events
+
+### One-off event, booking the room
+# @name createOneOff
+POST {{host}}/api/calendars/{{workId}}/events
+Content-Type: application/json
+
+{
+  "title": "Planning",
+  "start": "2026-01-06T13:00:00Z",
+  "end": "2026-01-06T14:00:00Z",
+  "resourceId": "{{roomId}}"
+}
+
+###
+@oneOffId = {{createOneOff.response.body.$.id}}
+
+### Daily stand-up for 5 days (no room)
+POST {{host}}/api/calendars/{{workId}}/events
+Content-Type: application/json
+
+{
+  "title": "Daily sync",
+  "start": "2026-01-05T08:30:00Z",
+  "end": "2026-01-05T08:45:00Z",
+  "recurrence": { "frequency": "Daily", "count": 5 }
+}
+
+### Weekly Mon/Wed/Fri stand-up in the room, every week, until 31 March
+# @name createWeekly
+POST {{host}}/api/calendars/{{workId}}/events
+Content-Type: application/json
+
+{
+  "title": "Stand-up",
+  "start": "2026-01-05T09:00:00Z",
+  "end": "2026-01-05T09:30:00Z",
+  "resourceId": "{{roomId}}",
+  "recurrence": {
+    "frequency": "Weekly",
+    "interval": 1,
+    "daysOfWeek": ["Monday", "Wednesday", "Friday"],
+    "until": "2026-03-31T00:00:00Z"
+  }
+}
+
+###
+@weeklyId = {{createWeekly.response.body.$.id}}
+
+### List stored events (a series appears once)
+GET {{host}}/api/calendars/{{workId}}/events
+
+### Get one event
+GET {{host}}/api/calendars/{{workId}}/events/{{weeklyId}}
+
+### Update an event (replaces the whole series): move the one-off
+PUT {{host}}/api/calendars/{{workId}}/events/{{oneOffId}}
+Content-Type: application/json
+
+{
+  "title": "Planning (moved)",
+  "start": "2026-01-06T15:00:00Z",
+  "end": "2026-01-06T16:00:00Z",
+  "resourceId": "{{roomId}}"
+}
+
+### Expanded occurrences for a window (recurring events unfolded)
+GET {{host}}/api/calendars/{{workId}}/occurrences?from=2026-01-05T00:00:00Z&to=2026-01-19T00:00:00Z
+
+### All bookings of the room, across every calendar
+GET {{host}}/api/resources/{{roomId}}/occurrences?from=2026-01-05T00:00:00Z&to=2026-01-19T00:00:00Z
+
+### ---------------------------------------------------------------- Error cases
+
+### 409: double-booking the room (clashes with the Monday stand-up)
+POST {{host}}/api/calendars/{{workId}}/events
+Content-Type: application/json
+
+{
+  "title": "Clash",
+  "start": "2026-01-12T09:15:00Z",
+  "end": "2026-01-12T10:00:00Z",
+  "resourceId": "{{roomId}}"
+}
+
+### 400: validation (blank title, end before start)
+POST {{host}}/api/calendars/{{workId}}/events
+Content-Type: application/json
+
+{ "title": "", "start": "2026-01-05T10:00:00Z", "end": "2026-01-05T09:00:00Z" }
+
+### 409: cannot delete a room that still has bookings
+DELETE {{host}}/api/resources/{{roomId}}
+
+### ---------------------------------------------------------------- Cleanup
+
+### Delete the whole series
+DELETE {{host}}/api/calendars/{{workId}}/events/{{weeklyId}}
+
+### Delete an event
+DELETE {{host}}/api/calendars/{{workId}}/events/{{oneOffId}}
+
+### Delete the room (allowed now that no events book it)
+DELETE {{host}}/api/resources/{{roomId}}
+
+### Delete the calendar (also deletes its events)
+DELETE {{host}}/api/calendars/{{workId}}
